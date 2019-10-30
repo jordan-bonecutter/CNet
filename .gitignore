@@ -1,0 +1,7 @@
+*.net
+*.json
+nettest
+old/*
+mattest
+*.o
+*ubyte
