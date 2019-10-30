@@ -87,6 +87,43 @@ void net_del(Net* net)
   free(net);
 }
 
+void net_eval(Net* n, Matrix* input, Matrix* out)
+{
+  assert(n);
+  assert(input);
+  assert(out);
+
+  long l, k;
+  double s;
+  
+  // Feed fwd
+  //
+  // a_n = s([W_n][a_n-1] + [b_n])
+  matrix_mul(n->W[0], input, n->a[0]);
+  matrix_add(n->a[0], n->b[0], n->a[0]);
+  matrix_fnc(n->a[0], n->a[0], sig);
+  for(l = 1; l < n->tlen-2; l++)
+  {
+    matrix_mul(n->W[l], n->a[l-1], n->a[l]);
+    matrix_add(n->a[l], n->b[l], n->a[l]);
+    matrix_fnc(n->a[l], n->a[l], sig);
+  }
+  // Last layer is softmax
+  matrix_mul(n->W[l], n->a[l-1], out);
+  matrix_add(out, n->b[l], out);
+  s = 0.;
+  for(k = 0; k < n->topo[l+1]; k++)
+  {
+    s += pow(M_E, out->weights[k][0]);
+  }
+  for(k = 0; k < n->topo[l+1]; k++)
+  {
+    out->weights[k][0] = (pow(M_E, out->weights[k][0]))/s;
+  }
+
+  return;
+}
+
 void net_feed(Net* n, Matrix* input, Matrix* y)
 {
   assert(n);
@@ -354,6 +391,7 @@ Net* net_res(FILE* fp)
 #include <time.h>
 #include <stdlib.h>
 
+// Read in an integer from the file
 int fgeti(FILE* fp)
 {
   int ret = 0;
@@ -371,15 +409,20 @@ int fgeti(FILE* fp)
 int main()
 {
   // Imitate 3b1b's network
-  unsigned topo[] = {28*28, 17, 16, 10}, i, N, R, C, x, ii, done;
-  //Net* n = net_new(&topo[0], sizeof(topo)/sizeof(unsigned));
-  FILE* res = fopen("save.net", "r");
-  Net* n = net_res(res);
-  fclose(res);
+  unsigned topo[] = {28*28, 17, 16, 10}, i, N, R, C, x, done;
+  Net* n = net_new(&topo[0], sizeof(topo)/sizeof(unsigned));
   FILE* images, * labels, *save;
  
-  images = fopen("train-images.idx3-ubyte", "r");
-  labels = fopen("train-labels.idx1-ubyte", "r");
+  images = fopen("mnist/train-images.idx3-ubyte", "r");
+  labels = fopen("mnist/train-labels.idx1-ubyte", "r");
+
+  if(!images || !labels)
+  {
+    printf("Please goto http://yann.lecun.com/exdb/mnist/ & download the dataset\n");
+    return 1;
+  }
+
+  // Read in the files
   fgeti(images);
   N = fgeti(images);
   R = fgeti(images);
@@ -388,10 +431,9 @@ int main()
   i = fgeti(labels);
   assert(i == N);
   
-  // Random in/out vectors
+  // Input & output vectors for the matrix
   Matrix* in = matrix_new(28*28, 1);
   Matrix* out = matrix_new(10, 1);
-  ii = 0;
   done = 0;
   for(;!done;)
   {
@@ -411,24 +453,28 @@ int main()
       x = fgetc(labels);
       out->weights[0][x] = 1.;
 
+      // Feed to the net
       net_feed(n, in, out);
       if((i+1)%300 == 0)
       {
-        ii++;
-        if(n->acc/300 > 0.97)
+        // If ever the accuracy is greater than 98% for 
+        // a mini-batch, then we done training
+        if(n->acc/300 > 0.98)
         {
           done = 1; 
         }
+        // Learn every 300 data points
         net_learn(n, 300, n->cost/270);
       }
     }
   }
 
+  // Close fp's & save
+  fclose(images);
+  fclose(labels);
   save = fopen("save.net", "w");
   net_dump(n, save);
   fclose(save);
-  fclose(images);
-  fclose(labels);
 
   // Free up space
   matrix_del(in);
